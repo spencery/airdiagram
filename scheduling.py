@@ -8,8 +8,8 @@ def plot():
   print("An dieser Stelle ist die Plot-Funktion auszuführen.")
 
 
-schedule.every(2).seconds.do(log)
-schedule.every(6).seconds.do(plot)
+schedule.every().minute.do(log)
+schedule.every(5).minutes.do(plot)
 
 while 1:
   schedule.run_pending()
