@@ -2,7 +2,7 @@
 from time import localtime, strftime, clock
 #print clock()
 #print "import time"
-from Adafruit_DHT import read_retry, AM2302
+#from Adafruit_DHT import read_retry, AM2302
 #print clock()
 #print "import Adafruit"
 from numpy import exp, log
@@ -14,7 +14,7 @@ from os import popen, path, remove
 import sys
 import signal
 
-if not path.isfile("/home/pi/exec") or path.isfile("/var/tmp/runningl"):
+if path.isfile("./lock"):
 	sys.exit(0)
 
 #print clock()
