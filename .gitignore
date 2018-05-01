@@ -4,3 +4,5 @@ csvs/*
 *.old
 Adafruit_Python_DHT/
 *.save.*
+*.db
+.gitignore

@@ -4,6 +4,7 @@ from time import strftime
 from Adafruit_DHT import read_retry, AM2302
 from numpy import exp, log
 from datetime import datetime
+import sqlite3
 
 maxProbeTries = 3
 dbConnection = None #TODO: Datenbank einrichten!
@@ -31,17 +32,22 @@ def probe():
 		dewpt = (-3928.5/(log(humidity*exp(-3928.5/(temperature+231.667)))-4.60517)
 			)-231.667
 
-		print('{0:0.2f} {1:0.2f} {2:0.2f}'.format(temperature, humidity, dewpt)) # TODO: In Datenbank schreiben!
+		print('{0:0.2f} {1:0.2f} {2:0.2f}'.format(temperature, humidity, dewpt))
+		with dbConnection:
+			cur = dbConnection.cursor()
+			cur.execute("insert into Probes values ( strftime('%s','now'), ?, ?, ?)", (temperature, humidity, dewpt))
 
 def plot():
 	print("Jetzt ist die Plot-Funktion auszuführen.")
 
 if __name__ == '__main__':
+	dbConnection = sqlite3.connect('../airdata.db')
 	scheduler = BlockingScheduler()
 	scheduler.add_executor('threadpool')
 	scheduler.add_job(probe, 'cron', second=5)
 	scheduler.add_job(plot, 'cron', minute='*/5')
 
+	probe()
 	try:
 		scheduler.start()
 	except (KeyboardInterrupt, SystemExit):
