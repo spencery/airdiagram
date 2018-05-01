@@ -1,8 +1,0 @@
-*.swp
-csvs/*
-*.save
-*.old
-Adafruit_Python_DHT/
-*.save.*
-*.db
-.gitignore
