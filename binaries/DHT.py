@@ -1,17 +1,20 @@
 #!/usr/bin/python3.5
 from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.triggers.cron import CronTrigger
 from time import strftime
 from Adafruit_DHT import read_retry, AM2302
 from numpy import exp, log
 from datetime import datetime
-import sqlite3
+from sqlite3 import connect as sql_connect
+from sys import argv, exit
+from getopt import getopt, GetoptError
 
 maxProbeTries = 3
-dbConnection = None #TODO: Datenbank einrichten!
+dbConnection = None
 
 def probe():
 	probeTryCount=0
-	print("%s\t" % datetime.time(datetime.now()), end='')
+	print("%s " % datetime.time(datetime.now()), end='')
 	#Do-While-Schleife für die Validierung
 	try:
 		while True:
@@ -41,13 +44,48 @@ def plot():
 	print("Jetzt ist die Plot-Funktion auszuführen.")
 
 if __name__ == '__main__':
-	dbConnection = sqlite3.connect('../airdata.db')
+	dbFilePath = './airdata.db' # Standardwert
+	probeCronTabExpression = ''
+	plotCronTabExpression = ''
+
+	# Parsen der übergebenen Parameter
+	try:
+		opts, args = getopt(argv[1:],"hd:m:p:",["help","dbfile=","probeinterval=","plotinterval="])
+	except GetoptError:
+		print("Usage:\n%s [-h] [-d <dbfile>] [-m <probeinterval>] [-p <plotinterval>]" % argv[0])
+		exit(42)
+
+	for opt, arg in opts:
+		if opt in ("-h", "--help"):
+			print("Usage:\n%s [-h] [-d <dbfile>] [-m <probeinterval>] [-p <plotinterval>]" % argv[0])
+			exit(0)
+		elif opt in ("-d", "--dbfile"):
+			dbFilePath = arg
+		elif opt in ("-m", "--probeinterval"):
+			probeCronTabExpression = arg
+		elif opt in ("-m", "--plotinterval"):
+			plotCronTabExpression = arg
+
+	dbConnection = sql_connect(dbFilePath, check_same_thread=False)
+	# Falls die benötigte Tabelle in der Datenbank noch nicht vorhanden ist → Anlegen
+	with dbConnection:
+		cur = dbConnection.cursor()
+		cur.execute("create table if not exists Probes (Timestamp int, Temperature float, Humidity float, DewPoint float);")
 	scheduler = BlockingScheduler()
 	scheduler.add_executor('threadpool')
-	scheduler.add_job(probe, 'cron', second=5)
-	scheduler.add_job(plot, 'cron', minute='*/5')
 
-	probe()
+	if (probeCronTabExpression == ''):
+		scheduler.add_job(probe, 'cron', second=0) #Standard-Intervall
+	else:
+		scheduler.add_job(probe, CronTrigger.from_crontab(probeCronTabExpression))
+
+	if (plotCronTabExpression == ''):
+		scheduler.add_job(plot, 'cron', minute='*/5', second=30) #Standard-Intervall
+	else:
+		scheduler.add_job(probe, CronTrigger.from_crontab(plotCronTabExpression))
+
+
+	probe() #Zum Testen! Später entfernen
 	try:
 		scheduler.start()
 	except (KeyboardInterrupt, SystemExit):
