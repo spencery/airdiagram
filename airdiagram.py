@@ -1,7 +1,7 @@
 #!/usr/bin/python3.5
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.events import EVENT_JOB_ERROR
+from apscheduler.events import EVENT_JOB_EXECUTED
 from time import strftime
 from Adafruit_DHT import read_retry, AM2302
 from numpy import exp, log
@@ -14,13 +14,13 @@ from paramiko import SSHClient, WarningPolicy
 from paramiko.ssh_exception import SSHException, AuthenticationException, NoValidConnectionsError
 from scp import SCPClient, SCPException
 from socket import gaierror
+from _thread import interrupt_main
 
 maxProbeTries = 3
 dbConnection = None
 
 def probe(tolerant):
-	probeTryCount=0
-	print("%s " % datetime.time(datetime.now()), end='')
+	probeTryCount = 0
 	#Do-While-Schleife für die Validierung
 	try:
 		while True:
@@ -31,10 +31,9 @@ def probe(tolerant):
 				raise ResourceWarning("%s Messung(en) erfolglos. Bitte stellen Sie sicher, dass der Sensor erreichbar ist." % probeTryCount)
 			if abs(temperature1 - temperature2) < 1 and abs(humidity1 - humidity2) < 2:
 				break
-	except ResourceWarning as w:
-		raise ResourceWarning(w)
-		#if not tolerant:
-		#	return 31 # Rückgabewert 31 bedeutet eine Forderung nach Programmabbruch
+	except ResourceWarning as w: # Falls Messung als gescheitert betrachtet wird, ist eine weitere Berechnung etc. nicht möglich
+		print(w)
+		return 11 # Rückgabewert 11 bedeutet eine Forderung nach Programmabbruch
 	else:
 		humidity = (humidity1+humidity2)/2
 		temperature = (temperature1+temperature2)/2
@@ -43,7 +42,7 @@ def probe(tolerant):
 		dewpt = (-3928.5/(log(humidity*exp(-3928.5/(temperature+231.667)))-4.60517)
 			)-231.667
 
-		print('{0:0.2f} {1:0.2f} {2:0.2f}'.format(temperature, humidity, dewpt))
+		print("%s %0.2f %0.2f %0.2f" % (datetime.time(datetime.now()), temperature, humidity, dewpt))
 		with dbConnection:
 			cur = dbConnection.cursor()
 			cur.execute("insert into Probes values ( strftime('%s','now'), ?, ?, ?)", (temperature, humidity, dewpt))
@@ -57,19 +56,19 @@ def plot(scp, remotepath, tolerant):
 		scp.put(htmlFileName, remote_path = remotepath)
 	except SCPException as e:
 		print("Fehler beim Übertragen der Datei, möglicherweise ist der angegebene Pfad fehlerhaft. Fehlermeldung: %s" % e)
-		if not tolerant:
-			exit(31)
+		return(13)
 
-def exceptionListener(event):
-	print("Fehler während eines Messversuchs, Beende Programm.")
-	#exit(37)
+def errorListener(event):
+	if event.retval in (11, 13):
+		print("Fehler während eines Messversuchs, Beende Programm.")
+		interrupt_main() # Beende Hauptprogramm auf saubere Weise statt das Programm zu töten
 
 if __name__ == '__main__':
 	dbFilePath = './data.db' # Standardwert
 	probeCronTabExpression = ''
 	plotCronTabExpression = ''
 	hostname = 'localhost' # Dummy-Standardwert
-	tolerant = False # reagiere auf Fehler im Standardfall stets mit exit.
+	tolerant = False # reagiere auf nicht-kritische Fehler mit exit.
 	username = 'pi' # Dummy-Standardwert
 	remotepath = '.' # Standardwert
 
@@ -78,7 +77,7 @@ if __name__ == '__main__':
 		opts, args = getopt(argv[1:],"hd:H:p:P:r:tu:",["help", "dbfile=", "hostname=", "probecronexpr=","plotcronexpr=", "remotepath=", "tolerant", "username="])
 	except GetoptError:
 		print("Usage:\n%s [-h] [-d <dbfile>] [-H <hostname>] [-p <probecronexpr>] [-P <plotcronexpr>] [-r <remotepath>] [-t] [-u <username>]" % argv[0])
-		exit(42)
+		exit(2)
 
 	for opt, arg in opts:
 		if opt in ("-h", "--help"):
@@ -107,8 +106,7 @@ if __name__ == '__main__':
 			cur = dbConnection.cursor()
 			cur.execute("create table if not exists Probes (Timestamp int, Temperature float, Humidity float, DewPoint float);")
 	except OperationalError as e:
-		print("Schwerwiegender Datenbank-Fehler:", e.args[0])
-		exit(26)
+		exit("Schwerwiegender Datenbank-Fehler:", e.args[0])
 
 	ssh = SSHClient()
 	ssh.load_system_host_keys()
@@ -125,23 +123,20 @@ if __name__ == '__main__':
 	try:
 		ssh.connect(hostname = hostname, username = username)
 	except AuthenticationException as e:
-		print("Authentifizierungsproblem: %s" % e.args[0])
-		exit(23)
+		exit("Authentifizierungsproblem: %s" % e.args[0])
 	except NoValidConnectionsError as e:
-		print("Die Verbindung zu „%s@%s“ ist fehlgeschlagen: %s" % (username, hostname, e.args[1]))
-		exit(29)
+		exit("Die Verbindung zu „%s@%s“ ist fehlgeschlagen: %s" % (username, hostname, e.args[1]))
 	except SSHException as e:
-		print("Allgemeiner SSH-Fehler bei Verbindung zu Host „%s“: %s" % (hostname, e))
-		exit(13)
+		exit("Allgemeiner SSH-Fehler bei Verbindung zu Host „%s“: %s" % (hostname, e))
 	except gaierror:
-		print("Der Hostname „%s“ konnte nicht gefunden werden." % hostname)
-		exit(17)
+		exit("Der Hostname „%s“ konnte nicht gefunden werden." % hostname)
 
 	scp = SCPClient(ssh.get_transport())
 
 	scheduler = BlockingScheduler()
 	scheduler.add_executor('threadpool')
-	scheduler.add_listener(exceptionListener, EVENT_JOB_ERROR)
+	if not tolerant: # Programm-Abrruch in verschiedenen Fehlerfällen
+		scheduler.add_listener(errorListener, EVENT_JOB_EXECUTED)
 
 	if (probeCronTabExpression == ''):
 		scheduler.add_job(probe, 'cron', args=[tolerant], coalesce=False, second=0) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
@@ -155,7 +150,7 @@ if __name__ == '__main__':
 
 
 	#probe(tolerant) #Zum Testen! Später entfernen
-	plot(scp, remotepath, tolerant)
+	#plot(scp, remotepath, tolerant)
 	try:
 		scheduler.start()
 	except (KeyboardInterrupt, SystemExit):
