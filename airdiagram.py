@@ -1,7 +1,7 @@
 #!/usr/bin/python3.5
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
-from apscheduler.events import EVENT_JOB_EXECUTED
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 from time import strftime
 from Adafruit_DHT import read_retry, AM2302
 from numpy import exp, log
@@ -21,6 +21,7 @@ dbConnection = None
 
 def probe(tolerant):
 	probeTryCount = 0
+	now = datetime.time(datetime.now())
 	#Do-While-Schleife für die Validierung
 	try:
 		while True:
@@ -42,7 +43,7 @@ def probe(tolerant):
 		dewpt = (-3928.5/(log(humidity*exp(-3928.5/(temperature+231.667)))-4.60517)
 			)-231.667
 
-		print("%s %0.2f %0.2f %0.2f" % (datetime.time(datetime.now()), temperature, humidity, dewpt))
+		print("%s %0.2f %0.2f %0.2f" % (now, temperature, humidity, dewpt))
 		with dbConnection:
 			cur = dbConnection.cursor()
 			cur.execute("insert into Probes values ( strftime('%s','now'), ?, ?, ?)", (temperature, humidity, dewpt))
@@ -65,16 +66,27 @@ def errorListener(event):
 
 if __name__ == '__main__':
 	dbFilePath = './data.db' # Standardwert
-	probeCronTabExpression = ''
-	plotCronTabExpression = ''
 	hostname = 'localhost' # Dummy-Standardwert
+	passphrase = ''
+	password = ''
+	plotCronTabExpression = ''
+	probeCronTabExpression = ''
+	remotepath = '.' # Standardwert
 	tolerant = False # reagiere auf nicht-kritische Fehler mit exit.
 	username = 'pi' # Dummy-Standardwert
-	remotepath = '.' # Standardwert
 
 	# Parsen der übergebenen Parameter
 	try:
-		opts, args = getopt(argv[1:],"hd:H:p:P:r:tu:",["help", "dbfile=", "hostname=", "probecronexpr=","plotcronexpr=", "remotepath=", "tolerant", "username="])
+		opts, args = getopt(argv[1:],"hd:H:p:P:r:tu:",["help",
+								"dbfile=",
+								"hostname=",
+								"passphrase=",
+								"password=",
+								"plotcronexpr=",
+								"probecronexpr=",
+								"remotepath=",
+								"tolerant",
+								"username="])
 	except GetoptError:
 		print("Usage:\n%s [-h] [-d <dbfile>] [-H <hostname>] [-p <probecronexpr>] [-P <plotcronexpr>] [-r <remotepath>] [-t] [-u <username>]" % argv[0])
 		exit(2)
@@ -87,6 +99,10 @@ if __name__ == '__main__':
 			dbFilePath = arg
 		elif opt in ("-H", "--hostname"):
 			hostname = arg
+		elif opt == "--passphrase":
+			passphrase = arg
+		elif opt == "--password":
+			password = arg
 		elif opt in ("-p", "--probecronexpr"):
 			probeCronTabExpression = arg
 		elif opt in ("-P", "--plotcronexpr"):
@@ -106,7 +122,7 @@ if __name__ == '__main__':
 			cur = dbConnection.cursor()
 			cur.execute("create table if not exists Probes (Timestamp int, Temperature float, Humidity float, DewPoint float);")
 	except OperationalError as e:
-		exit("Schwerwiegender Datenbank-Fehler:", e.args[0])
+		exit("Schwerwiegender Datenbank-Fehler: %s", e.args[0])
 
 	ssh = SSHClient()
 	ssh.load_system_host_keys()
@@ -121,7 +137,7 @@ if __name__ == '__main__':
 		print("Die Datei ~/.ssh/known_hosts konnte nicht geöffnet werden, stellen Sie die nötigen Zugriffs-Rechte sicher.")
 
 	try:
-		ssh.connect(hostname = hostname, username = username)
+			ssh.connect(hostname = hostname, username = username, password = password, passphrase = passphrase)
 	except AuthenticationException as e:
 		exit("Authentifizierungsproblem: %s" % e.args[0])
 	except NoValidConnectionsError as e:
@@ -136,15 +152,15 @@ if __name__ == '__main__':
 	scheduler = BlockingScheduler()
 	scheduler.add_executor('threadpool')
 	if not tolerant: # Programm-Abrruch in verschiedenen Fehlerfällen
-		scheduler.add_listener(errorListener, EVENT_JOB_EXECUTED)
+		scheduler.add_listener(errorListener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 
 	if (probeCronTabExpression == ''):
-		scheduler.add_job(probe, 'cron', args=[tolerant], coalesce=False, second=0) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
+		scheduler.add_job(probe, 'cron', args=[tolerant], coalesce=False, second='*/15') # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
 	else:
 		scheduler.add_job(probe, CronTrigger.from_crontab(probeCronTabExpression))
 
 	if (plotCronTabExpression == ''):
-		scheduler.add_job(plot, 'cron', args=[scp, remotepath, tolerant], coalesce=False, minute='*/5', second=50) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
+		scheduler.add_job(plot, 'cron', args=[scp, remotepath, tolerant], coalesce=False, minute='*/1', second=50) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
 	else:
 		scheduler.add_job(plot, CronTrigger.from_crontab(plotCronTabExpression), args=[scp, remotepath, tolerant])
 
@@ -154,4 +170,5 @@ if __name__ == '__main__':
 	try:
 		scheduler.start()
 	except (KeyboardInterrupt, SystemExit):
+		scheduler.shutdown(wait=False)
 		pass
