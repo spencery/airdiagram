@@ -16,10 +16,7 @@ from scp import SCPClient, SCPException
 from socket import gaierror
 from _thread import interrupt_main
 
-maxProbeTries = 3
-dbConnection = None
-
-def probe(tolerant):
+def probe(dbConnection, tolerant, maxProbeTries):
 	probeTryCount = 0
 	now = datetime.time(datetime.now())
 	#Do-While-Schleife für die Validierung
@@ -52,7 +49,7 @@ def plot(scp, remotepath, tolerant):
 	htmlFileName = 'scatter.html'
 	print("Jetzt ist die Plot-Funktion auszuführen.")
 
-	# Push auf gewählten Server per SCP
+	# Push auf gewählten Server per SCP durch paramiko, falls scp None ist, verwende SCP des Systems
 	try:
 		scp.put(htmlFileName, remote_path = remotepath)
 	except SCPException as e:
@@ -67,48 +64,57 @@ def errorListener(event):
 if __name__ == '__main__':
 	dbFilePath = './data.db' # Standardwert
 	hostname = 'localhost' # Dummy-Standardwert
+	maxProbeTries = 3 # Standardwert
 	passphrase = ''
 	password = ''
 	plotCronTabExpression = ''
 	probeCronTabExpression = ''
 	remotepath = '.' # Standardwert
+	scp = None # Falls nicht initialisiert wird, wird SCP des Systems verwendet
 	tolerant = False # reagiere auf nicht-kritische Fehler mit exit.
 	username = 'pi' # Dummy-Standardwert
+	useSystemSsh = False # verwende standardmäßig paramiko statt ssh des Systems
 
 	# Parsen der übergebenen Parameter
 	try:
-		opts, args = getopt(argv[1:],"hd:H:p:P:r:tu:",["help",
+		opts, args = getopt(argv[1:],"hd:H:m:p:P:r:stu:",["help",
 								"dbfile=",
 								"hostname=",
+								"maxproberetries=",
 								"passphrase=",
 								"password=",
 								"plotcronexpr=",
 								"probecronexpr=",
 								"remotepath=",
+								"systemssh",
 								"tolerant",
 								"username="])
 	except GetoptError:
-		print("Usage:\n%s [-h] [-d <dbfile>] [-H <hostname>] [-p <probecronexpr>] [-P <plotcronexpr>] [-r <remotepath>] [-t] [-u <username>]" % argv[0])
+		print("Usage:\n%s [-h] [-d <dbfile>] [-H <hostname>] [-m <maxproberetries>] [-p <password>] [-P <passphrase>] [-r <remotepath>] [-s] [-t] [-u <username>]" % argv[0])
 		exit(2)
 
 	for opt, arg in opts:
 		if opt in ("-h", "--help"):
-			print("Usage:\n%s [-h] [-d <dbfile>] [-H <hostname>] [-p '<probecronexpr>'] [-P '<plotcronexpr>'] [-r <remotepath>] [-t] [-u <username>]" % argv[0])
+			print("Usage:\n%s [-h] [-d <dbfile>] [-H <hostname>] [-m <maxproberetries>] [-p <password>] [-P <passphrase>] [-r <remotepath>] [-s] [-t] [-u <username>]" % argv[0])
 			exit(0)
 		elif opt in ("-d", "--dbfile"):
 			dbFilePath = arg
 		elif opt in ("-H", "--hostname"):
 			hostname = arg
-		elif opt == "--passphrase":
+		elif opt in ("-m", "--maxproberetries"):
+			maxProbeTries = arg
+		elif opt in ("-P", "--passphrase"):
 			passphrase = arg
-		elif opt == "--password":
+		elif opt in ("-p", "--password"):
 			password = arg
-		elif opt in ("-p", "--probecronexpr"):
+		elif opt == "--probecronexpr":
 			probeCronTabExpression = arg
-		elif opt in ("-P", "--plotcronexpr"):
+		elif opt == "--plotcronexpr":
 			plotCronTabExpression = arg
 		elif opt in ("-r", "--remotepath"):
 			remotepath = arg
+		#elif opt in ("-n", "--systemssh"):
+		#	useSystemSsh = True
 		elif opt in ("-t", "--tolerant"):
 			tolerant = True
 		elif opt in ("-u", "--username"):
@@ -124,30 +130,38 @@ if __name__ == '__main__':
 	except OperationalError as e:
 		exit("Schwerwiegender Datenbank-Fehler: %s", e.args[0])
 
-	ssh = SSHClient()
-	ssh.load_system_host_keys()
+	# Einrichtung der SSH-Verbindung über paramiko nur, wenn nicht das systemeigene SSH verwendet wird
+	if not useSystemSsh:
+		ssh = SSHClient()
+		ssh.load_system_host_keys()
 
-	if tolerant: # Falls nicht tolerant, ist die Policy standardmäßig „RejectPolicy“
-		ssh.set_missing_host_key_policy(WarningPolicy)
-	try:
-		ssh.load_host_keys(path.expanduser('~/.ssh/known_hosts'))
-	except FileNotFoundError:
-		print("Die Datei ~/.ssh/known_hosts konnte nicht gefunden werden, überspringe")
-	except PermissionError:
-		print("Die Datei ~/.ssh/known_hosts konnte nicht geöffnet werden, stellen Sie die nötigen Zugriffs-Rechte sicher.")
+		if tolerant: # Falls nicht tolerant, ist die Policy standardmäßig „RejectPolicy“
+			ssh.set_missing_host_key_policy(WarningPolicy)
+		try:
+			ssh.load_host_keys(path.expanduser('~/.ssh/known_hosts'))
+		except FileNotFoundError:
+			print("Die Datei ~/.ssh/known_hosts konnte nicht gefunden werden, überspringe")
+		except PermissionError:
+			print("Die Datei ~/.ssh/known_hosts konnte nicht geöffnet werden, überspringe, stellen Sie die nötigen Zugriffs-Rechte sicher.")
 
-	try:
+		try:
 			ssh.connect(hostname = hostname, username = username, password = password, passphrase = passphrase)
-	except AuthenticationException as e:
-		exit("Authentifizierungsproblem: %s" % e.args[0])
-	except NoValidConnectionsError as e:
-		exit("Die Verbindung zu „%s@%s“ ist fehlgeschlagen: %s" % (username, hostname, e.args[1]))
-	except SSHException as e:
-		exit("Allgemeiner SSH-Fehler bei Verbindung zu Host „%s“: %s" % (hostname, e))
-	except gaierror:
-		exit("Der Hostname „%s“ konnte nicht gefunden werden." % hostname)
-
-	scp = SCPClient(ssh.get_transport())
+		except AuthenticationException as e:
+			exit("Authentifizierungsproblem: %s" % e.args[0])
+		except NoValidConnectionsError as e:
+			print("Die Verbindung zu „%s@%s“ ist fehlgeschlagen: %s" % (username, hostname, e.args[1]))
+			if not tolerant:
+				exit(1)
+		except SSHException as e:
+			print("Allgemeiner SSH-Fehler bei Verbindung zu Host „%s“: %s" % (hostname, e))
+			if not tolerant:
+				exit(1)
+		except gaierror:
+			print("Der Hostname „%s“ konnte nicht gefunden werden." % hostname)
+			if not tolerant:
+				exit(1)
+		else:
+			scp = SCPClient(ssh.get_transport())
 
 	scheduler = BlockingScheduler()
 	scheduler.add_executor('threadpool')
@@ -155,9 +169,9 @@ if __name__ == '__main__':
 		scheduler.add_listener(errorListener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 
 	if (probeCronTabExpression == ''):
-		scheduler.add_job(probe, 'cron', args=[tolerant], coalesce=False, second='*/15') # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
+		scheduler.add_job(probe, 'cron', args=[dbConnection, tolerant, maxProbeTries], coalesce=False, second='*/15') # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
 	else:
-		scheduler.add_job(probe, CronTrigger.from_crontab(probeCronTabExpression))
+		scheduler.add_job(probe, CronTrigger.from_crontab(probeCronTabExpression), args=[dbConnection, tolerant, maxProbeTries])
 
 	if (plotCronTabExpression == ''):
 		scheduler.add_job(plot, 'cron', args=[scp, remotepath, tolerant], coalesce=False, minute='*/1', second=50) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
