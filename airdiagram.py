@@ -2,7 +2,7 @@
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
-from time import strftime
+from time import strftime, localtime
 from Adafruit_DHT import read_retry, AM2302
 from numpy import exp, log
 from datetime import datetime
@@ -15,6 +15,8 @@ from paramiko.ssh_exception import SSHException, AuthenticationException, NoVali
 from scp import SCPClient, SCPException
 from socket import gaierror
 from _thread import interrupt_main
+from plotly.offline import plot as plotlyPlot
+from plotly.graph_objs import Scatter
 
 def probe(dbConnection, tolerant, maxProbeTries):
 	probeTryCount = 0
@@ -45,10 +47,62 @@ def probe(dbConnection, tolerant, maxProbeTries):
 			cur = dbConnection.cursor()
 			cur.execute("insert into Probes values ( strftime('%s','now'), ?, ?, ?)", (temperature, humidity, dewpt))
 
-def plot(scp, remotepath, tolerant):
-	htmlFileName = 'scatter.html'
+def plot(dbConnection, remotepath, scp, tolerant):
 	print("Jetzt ist die Plot-Funktion auszuführen.")
 
+	htmlFileName = 'diagram.html'
+	temperature = [] #Arrays
+	humidity = []
+	dewpt = []
+	humanReadableDateTime = []
+
+	cursor = dbConnection.execute("SELECT Timestamp, Temperature, Humidity, DewPoint FROM Probes")
+
+	#Daten einlesen
+	for row in cursor:
+		temperature.append(row[1])
+		humidity.append(row[2])
+		dewpt.append(row[3])
+		humanReadableDateTime.append(strftime('%Y-%m-%d %H:%M:%S', localtime(row[0])))
+
+	# Diagrammerstellung
+	trace0 = Scatter(
+		x=humanReadableDateTime,
+		y = temperature,
+		name = 'Lufttemperatur',
+		line = dict(
+			color = ('rgb(205, 12, 24)'),
+			width = 4,
+			shape = 'spline')
+	)
+	trace1 = Scatter(
+		x=humanReadableDateTime,
+		y = humidity,
+		name = 'Luftfeuchte',
+		line = dict(
+			color = ('rgb(22, 96, 167)'),
+			width = 4,
+			shape = 'spline')
+	)
+	trace2 = Scatter(
+		x=humanReadableDateTime,
+		y = dewpt,
+		name = 'Taupunkt',
+		line = dict(
+			color = ('rgb(0, 192, 94)'),
+			width = 4,
+			shape = 'spline')
+	)
+
+	data = [trace0, trace1, trace2]
+
+	# Edit the layout
+	layout = dict(title = 'Diagramm Temperatur/Feuchte/Taupunkt',
+			xaxis = dict(title = 'Datum'),
+			yaxis = dict(title = 'Temperatur(°C) / Feuchte(%) / Taupunkt(°C)'),
+		)
+	fig = dict(data = data, layout = layout)
+	plotlyPlot(fig, filename='diagram.html')
 	# Push auf gewählten Server per SCP durch paramiko, falls scp None ist, verwende SCP des Systems
 	try:
 		scp.put(htmlFileName, remote_path = remotepath)
@@ -69,7 +123,7 @@ if __name__ == '__main__':
 	password = ''
 	plotCronTabExpression = ''
 	probeCronTabExpression = ''
-	remotepath = '.' # Standardwert
+	remotepath = './diagram.html' # Standardname der Ausgabedatei
 	scp = None # Falls nicht initialisiert wird, wird SCP des Systems verwendet
 	tolerant = False # reagiere auf nicht-kritische Fehler mit exit.
 	username = 'pi' # Dummy-Standardwert
@@ -174,9 +228,9 @@ if __name__ == '__main__':
 		scheduler.add_job(probe, CronTrigger.from_crontab(probeCronTabExpression), args=[dbConnection, tolerant, maxProbeTries])
 
 	if (plotCronTabExpression == ''):
-		scheduler.add_job(plot, 'cron', args=[scp, remotepath, tolerant], coalesce=False, minute='*/1', second=50) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
+		scheduler.add_job(plot, 'cron', args=[dbConnection, remotepath, scp, tolerant], coalesce=False, minute='*/1', second=50) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
 	else:
-		scheduler.add_job(plot, CronTrigger.from_crontab(plotCronTabExpression), args=[scp, remotepath, tolerant])
+		scheduler.add_job(plot, CronTrigger.from_crontab(plotCronTabExpression), args=[dbConnection, remotepath, scp, tolerant])
 
 
 	#probe(tolerant) #Zum Testen! Später entfernen
@@ -185,4 +239,5 @@ if __name__ == '__main__':
 		scheduler.start()
 	except (KeyboardInterrupt, SystemExit):
 		scheduler.shutdown(wait=False)
+		dbConnection.close()
 		pass
