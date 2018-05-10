@@ -47,9 +47,7 @@ def probe(dbConnection, tolerant, maxProbeTries):
 			cur = dbConnection.cursor()
 			cur.execute("insert into Probes values ( strftime('%s','now'), ?, ?, ?)", (temperature, humidity, dewpt))
 
-def plot(dbConnection, remotepath, scp, tolerant):
-	print("Jetzt ist die Plot-Funktion auszuführen.")
-
+def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 	htmlFileName = 'diagram.html'
 	temperature = [] #Arrays
 	humidity = []
@@ -117,6 +115,7 @@ def errorListener(event):
 
 if __name__ == '__main__':
 	dbFilePath = './data.db' # Standardwert
+	diagramPeriod = '24' # Standardwert 1 Tag
 	hostname = 'localhost' # Dummy-Standardwert
 	maxProbeTries = 3 # Standardwert
 	passphrase = ''
@@ -133,6 +132,7 @@ if __name__ == '__main__':
 	try:
 		opts, args = getopt(argv[1:],"hd:H:m:p:P:r:stu:",["help",
 								"dbfile=",
+								"diagramperiod=",
 								"hostname=",
 								"maxproberetries=",
 								"passphrase=",
@@ -144,15 +144,17 @@ if __name__ == '__main__':
 								"tolerant",
 								"username="])
 	except GetoptError:
-		print("Usage:\n%s [-h] [-d <dbfile>] [-H <hostname>] [-m <maxproberetries>] [-p <password>] [-P <passphrase>] [-r <remotepath>] [-s] [-t] [-u <username>]" % argv[0])
+		print("Usage:\n%s [-h] [-d <dbfile>] [--diagramperiod=<no. of hours<] [-H <hostname>] [-m <maxproberetries>] [-p <password>] [-P <passphrase>] [-r <remotepath>] [-s] [-t] [-u <username>]" % argv[0])
 		exit(2)
 
 	for opt, arg in opts:
 		if opt in ("-h", "--help"):
-			print("Usage:\n%s [-h] [-d <dbfile>] [-H <hostname>] [-m <maxproberetries>] [-p <password>] [-P <passphrase>] [-r <remotepath>] [-s] [-t] [-u <username>]" % argv[0])
+			print("Usage:\n%s [-h] [-d <dbfile>] [--diagramperiod=<no. of hours<] [-H <hostname>] [-m <maxproberetries>] [-p <password>] [-P <passphrase>] [-r <remotepath>] [-s] [-t] [-u <username>]" % argv[0])
 			exit(0)
 		elif opt in ("-d", "--dbfile"):
 			dbFilePath = arg
+		elif opt == "--diagramperiod":
+			diagramPeriod = arg
 		elif opt in ("-H", "--hostname"):
 			hostname = arg
 		elif opt in ("-m", "--maxproberetries"):
@@ -228,9 +230,9 @@ if __name__ == '__main__':
 		scheduler.add_job(probe, CronTrigger.from_crontab(probeCronTabExpression), args=[dbConnection, tolerant, maxProbeTries])
 
 	if (plotCronTabExpression == ''):
-		scheduler.add_job(plot, 'cron', args=[dbConnection, remotepath, scp, tolerant], coalesce=False, minute='*/1', second=50) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
+		scheduler.add_job(plot, 'cron', args=[dbConnection, diagramPeriod, remotepath, scp, tolerant], coalesce=False, minute='*/1', second=50) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
 	else:
-		scheduler.add_job(plot, CronTrigger.from_crontab(plotCronTabExpression), args=[dbConnection, remotepath, scp, tolerant])
+		scheduler.add_job(plot, CronTrigger.from_crontab(plotCronTabExpression), args=[dbConnection, diagramPeriod, remotepath, scp, tolerant])
 
 
 	#probe(tolerant) #Zum Testen! Später entfernen
