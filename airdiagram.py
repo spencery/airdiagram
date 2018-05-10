@@ -48,6 +48,7 @@ def probe(dbConnection, tolerant, maxProbeTries):
 			cur.execute("insert into Probes values ( strftime('%s','now'), ?, ?, ?)", (temperature, humidity, dewpt))
 
 def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
+	now = datetime.time(datetime.now())
 	htmlFileName = 'diagram.html'
 	temperature = [] #Arrays
 	humidity = []
@@ -55,7 +56,7 @@ def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 	humanReadableDateTime = []
 
 	#cursor = dbConnection.execute("SELECT Timestamp, Temperature, Humidity, DewPoint FROM Probes")
-	cursor = dbConnection.execute("SELECT Timestamp, Temperature, Humidity, DewPoint FROM Probes WHERE Timestamp >= date('now', '-1 days') AND Timestamp < date('now')") #Es werden nur Daten von den letzten 24h geladen
+	cursor = dbConnection.execute("SELECT Timestamp, Temperature, Humidity, DewPoint FROM Probes WHERE Timestamp >= strftime('%s', 'now', '-1 days')") #Es werden nur Daten von den letzten 24h geladen
 
 	#Daten einlesen
 	for row in cursor:
@@ -108,6 +109,8 @@ def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 	except SCPException as e:
 		print("Fehler beim Übertragen der Datei, möglicherweise ist der angegebene Pfad fehlerhaft. Fehlermeldung: %s" % e)
 		return(13)
+	else:
+		print("%s Diagramm erfolgreich erstellt" % now)
 
 def errorListener(event):
 	if event.retval in (11, 13):
@@ -226,12 +229,12 @@ if __name__ == '__main__':
 		scheduler.add_listener(errorListener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 
 	if (probeCronTabExpression == ''):
-		scheduler.add_job(probe, 'cron', args=[dbConnection, tolerant, maxProbeTries], coalesce=False, second='*/15') # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
+		scheduler.add_job(probe, 'cron', args=[dbConnection, tolerant, maxProbeTries], coalesce=False, second='*/30') # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
 	else:
 		scheduler.add_job(probe, CronTrigger.from_crontab(probeCronTabExpression), args=[dbConnection, tolerant, maxProbeTries])
 
 	if (plotCronTabExpression == ''):
-		scheduler.add_job(plot, 'cron', args=[dbConnection, diagramPeriod, remotepath, scp, tolerant], coalesce=False, minute='*/1', second=50) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
+		scheduler.add_job(plot, 'cron', args=[dbConnection, diagramPeriod, remotepath, scp, tolerant], coalesce=False, minute='*/2', second=50) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
 	else:
 		scheduler.add_job(plot, CronTrigger.from_crontab(plotCronTabExpression), args=[dbConnection, diagramPeriod, remotepath, scp, tolerant])
 
