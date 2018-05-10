@@ -54,7 +54,8 @@ def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 	dewpt = []
 	humanReadableDateTime = []
 
-	cursor = dbConnection.execute("SELECT Timestamp, Temperature, Humidity, DewPoint FROM Probes")
+	#cursor = dbConnection.execute("SELECT Timestamp, Temperature, Humidity, DewPoint FROM Probes")
+	cursor = dbConnection.execute("SELECT Timestamp, Temperature, Humidity, DewPoint FROM Probes WHERE Timestamp >= date('now', '-1 days') AND Timestamp < date('now')") #Es werden nur Daten von den letzten 24h geladen
 
 	#Daten einlesen
 	for row in cursor:
