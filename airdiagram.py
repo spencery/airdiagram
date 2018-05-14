@@ -98,7 +98,7 @@ def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 
 	# Edit the layout
 	layout = dict(title = 'Diagramm Temperatur/Feuchte/Taupunkt',
-			xaxis = dict(title = 'Datum'),
+			xaxis = dict(title = 'Zeit'),
 			yaxis = dict(title = 'Temperatur(°C) / Feuchte(%) / Taupunkt(°C)'),
 		)
 	fig = dict(data = data, layout = layout)
@@ -121,6 +121,7 @@ if __name__ == '__main__':
 	dbFilePath = './data.db' # Standardwert
 	diagramPeriod = '24' # Standardwert 1 Tag
 	hostname = 'localhost' # Dummy-Standardwert
+	knownHostsFile = '~/.ssh/known_hosts'
 	maxProbeTries = 3 # Standardwert
 	passphrase = ''
 	password = ''
@@ -134,10 +135,11 @@ if __name__ == '__main__':
 
 	# Parsen der übergebenen Parameter
 	try:
-		opts, args = getopt(argv[1:],"hd:H:m:p:P:r:stu:",["help",
+		opts, args = getopt(argv[1:],"hd:H:k:m:p:P:r:stu:",["help",
 								"dbfile=",
 								"diagramperiod=",
 								"hostname=",
+								"knownhostsfile=",
 								"maxproberetries=",
 								"passphrase=",
 								"password=",
@@ -148,12 +150,12 @@ if __name__ == '__main__':
 								"tolerant",
 								"username="])
 	except GetoptError:
-		print("Usage:\n%s [-h] [-d <dbfile>] [--diagramperiod=<no. of hours<] [-H <hostname>] [-m <maxproberetries>] [-p <password>] [-P <passphrase>] [-r <remotepath>] [-s] [-t] [-u <username>]" % argv[0])
+		print("Usage:\n%s [-h] [-d <dbfile>] [--diagramperiod=<no. of hours<] [-H <hostname>] [-k <knownhostsfile>] [-m <maxproberetries>] [-p <password>] [-P <passphrase>] [-r <remotepath>] [-s] [-t] [-u <username>]" % argv[0])
 		exit(2)
 
 	for opt, arg in opts:
 		if opt in ("-h", "--help"):
-			print("Usage:\n%s [-h] [-d <dbfile>] [--diagramperiod=<no. of hours<] [-H <hostname>] [-m <maxproberetries>] [-p <password>] [-P <passphrase>] [-r <remotepath>] [-s] [-t] [-u <username>]" % argv[0])
+			print("Usage:\n%s [-h] [-d <dbfile>] [--diagramperiod=<no. of hours<] [-H <hostname>] [-k <knownhostsfile>] [-m <maxproberetries>] [-p <password>] [-P <passphrase>] [-r <remotepath>] [-s] [-t] [-u <username>]" % argv[0])
 			exit(0)
 		elif opt in ("-d", "--dbfile"):
 			dbFilePath = arg
@@ -161,6 +163,8 @@ if __name__ == '__main__':
 			diagramPeriod = arg
 		elif opt in ("-H", "--hostname"):
 			hostname = arg
+		elif opt in ("-k", "--knownhostsfile"):
+			knownHostsFile = arg
 		elif opt in ("-m", "--maxproberetries"):
 			maxProbeTries = arg
 		elif opt in ("-P", "--passphrase"):
@@ -198,7 +202,7 @@ if __name__ == '__main__':
 		if tolerant: # Falls nicht tolerant, ist die Policy standardmäßig „RejectPolicy“
 			ssh.set_missing_host_key_policy(WarningPolicy)
 		try:
-			ssh.load_host_keys(path.expanduser('~/.ssh/known_hosts'))
+			ssh.load_host_keys(path.expanduser(knownHostsFile))
 		except FileNotFoundError:
 			print("Die Datei ~/.ssh/known_hosts konnte nicht gefunden werden, überspringe")
 		except PermissionError:
@@ -207,7 +211,7 @@ if __name__ == '__main__':
 		try:
 			ssh.connect(hostname = hostname, username = username, password = password, passphrase = passphrase)
 		except AuthenticationException as e:
-			exit("Authentifizierungsproblem: %s" % e.args[0])
+			exit("Authentifizierungsproblem: %s" % e)
 		except NoValidConnectionsError as e:
 			print("Die Verbindung zu „%s@%s“ ist fehlgeschlagen: %s" % (username, hostname, e.args[1]))
 			if not tolerant:
