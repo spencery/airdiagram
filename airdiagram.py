@@ -4,7 +4,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 from time import strftime, localtime
 from Adafruit_DHT import read_retry, AM2302
-from numpy import exp, log
+from numpy import exp, log, convolve, ones
 from datetime import datetime
 from sqlite3 import OperationalError, connect as sql_connect
 from sys import argv, exit
@@ -49,26 +49,32 @@ def probe(dbConnection, tolerant, maxProbeTries):
 
 def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 	now = datetime.time(datetime.now())
+	fltAvgModr = 37
 	htmlFileName = 'diagram.html'
+	humanReadableDateTime = []
 	temperature = [] #Arrays
 	humidity = []
 	dewpt = []
-	humanReadableDateTime = []
 
 	#cursor = dbConnection.execute("SELECT Timestamp, Temperature, Humidity, DewPoint FROM Probes")
 	cursor = dbConnection.execute("SELECT Timestamp, Temperature, Humidity, DewPoint FROM Probes WHERE Timestamp >= strftime('%s', 'now', '-1 days')") #Es werden nur Daten von den letzten 24h geladen
 
 	#Daten einlesen
 	for row in cursor:
+		humanReadableDateTime.append(strftime('%Y-%m-%d %H:%M:%S', localtime(row[0])))
 		temperature.append(row[1])
 		humidity.append(row[2])
 		dewpt.append(row[3])
-		humanReadableDateTime.append(strftime('%Y-%m-%d %H:%M:%S', localtime(row[0])))
+
+	# Berechnung der gleitenden Mittelwerte der drei Messgrößen
+	moderatedTemperature = convolve(temperature, ones((fltAvgModr,))/fltAvgModr, mode='valid')
+	moderatedHumidity = convolve(humidity, ones((fltAvgModr,))/fltAvgModr, mode='valid')
+	moderatedDewpt = convolve(dewpt, ones((fltAvgModr,))/fltAvgModr, mode='valid')
 
 	# Diagrammerstellung
 	trace0 = Scatter(
-		x=humanReadableDateTime,
-		y = temperature,
+		x = humanReadableDateTime[int(fltAvgModr/2):-int(fltAvgModr/2)],
+		y = moderatedTemperature,
 		name = 'Lufttemperatur',
 		line = dict(
 			color = ('rgb(205, 12, 24)'),
@@ -76,8 +82,8 @@ def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 			shape = 'spline')
 	)
 	trace1 = Scatter(
-		x=humanReadableDateTime,
-		y = humidity,
+		x = humanReadableDateTime[int(fltAvgModr/2):-int(fltAvgModr/2)],
+		y = moderatedHumidity,
 		name = 'Luftfeuchte',
 		line = dict(
 			color = ('rgb(22, 96, 167)'),
@@ -85,8 +91,8 @@ def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 			shape = 'spline')
 	)
 	trace2 = Scatter(
-		x=humanReadableDateTime,
-		y = dewpt,
+		x = humanReadableDateTime[int(fltAvgModr/2):-int(fltAvgModr/2)],
+		y = moderatedDewpt,
 		name = 'Taupunkt',
 		line = dict(
 			color = ('rgb(0, 192, 94)'),
@@ -94,7 +100,35 @@ def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 			shape = 'spline')
 	)
 
-	data = [trace0, trace1, trace2]
+	trace3 = Scatter(
+		x = humanReadableDateTime,
+		y = temperature,
+		showlegend = False,
+		line = dict(
+			color = ('rgba(205, 12, 24, 0.5)'),
+			width = 1,
+			shape = 'spline')
+	)
+	trace4 = Scatter(
+		x = humanReadableDateTime,
+		y = humidity,
+		showlegend = False,
+		line = dict(
+			color = ('rgba(22, 96, 167, 0.5)'),
+			width = 1,
+			shape = 'spline')
+	)
+	trace5 = Scatter(
+		x = humanReadableDateTime,
+		y = dewpt,
+		showlegend = False,
+		line = dict(
+			color = ('rgba(0, 192, 94, 0.5)'),
+			width = 1,
+			shape = 'spline')
+	)
+
+	data = [trace0, trace1, trace2, trace3, trace4, trace5]
 
 	# Edit the layout
 	layout = dict(title = 'Diagramm Temperatur/Feuchte/Taupunkt',
@@ -233,12 +267,12 @@ if __name__ == '__main__':
 		scheduler.add_listener(errorListener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 
 	if (probeCronTabExpression == ''):
-		scheduler.add_job(probe, 'cron', args=[dbConnection, tolerant, maxProbeTries], coalesce=False, second='*/30') # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
+		scheduler.add_job(probe, 'cron', args=[dbConnection, tolerant, maxProbeTries], coalesce=False, second='*/10') # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
 	else:
 		scheduler.add_job(probe, CronTrigger.from_crontab(probeCronTabExpression), args=[dbConnection, tolerant, maxProbeTries])
 
 	if (plotCronTabExpression == ''):
-		scheduler.add_job(plot, 'cron', args=[dbConnection, diagramPeriod, remotepath, scp, tolerant], coalesce=False, minute='*/2', second=50) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
+		scheduler.add_job(plot, 'cron', args=[dbConnection, diagramPeriod, remotepath, scp, tolerant], coalesce=False, minute='*/1', second=50) # verwende Standard-Intervall, falls keine Cron-Tab-Expr. gesetzt
 	else:
 		scheduler.add_job(plot, CronTrigger.from_crontab(plotCronTabExpression), args=[dbConnection, diagramPeriod, remotepath, scp, tolerant])
 
