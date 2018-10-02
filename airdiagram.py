@@ -27,7 +27,7 @@ def probe(dbConnection, tolerant, maxProbeTries):
 			humidity1, temperature1 = read_retry(sensor=AM2302, pin=2, retries=5) # Try to grab a sensor reading. Use the read_retry method which will retry up
 			humidity2, temperature2 = read_retry(sensor=AM2302, pin=2, retries=5) # to 15 times to get a sensor reading (waiting 2 seconds between each retry).
 			probeTryCount += 1
-			if None in [humidity1, temperature1, humidity2, temperature2] or probeTryCount >= maxProbeTries:
+			if None in [humidity1, temperature1, humidity2, temperature2] or probeTryCount >= maxProbeTries or humidity1 < 0 or humidity1 > 100 or temperature1 < 0 or temperature1 > 100:
 				raise ResourceWarning("%s Messung(en) erfolglos. Bitte stellen Sie sicher, dass der Sensor erreichbar ist." % probeTryCount)
 			if abs(temperature1 - temperature2) < 1 and abs(humidity1 - humidity2) < 2:
 				break
@@ -39,8 +39,7 @@ def probe(dbConnection, tolerant, maxProbeTries):
 		temperature = (temperature1+temperature2)/2
 
 		#Taupunktberechnung, Formel anhand von TODO: Quelle angeben!  aufgebaut und per CAS gekürzt, sodass die Berechnung in einem Schritt erfolgt.
-		dewpt = (-3928.5/(log(humidity*exp(-3928.5/(temperature+231.667)))-4.60517)
-			)-231.667
+		dewpt = (-3928.5/(log(humidity*exp(-3928.5/(temperature+231.667)))-4.60517))-231.667
 
 		print("%s %0.2f %0.2f %0.2f" % (now, temperature, humidity, dewpt))
 		with dbConnection:
@@ -50,6 +49,7 @@ def probe(dbConnection, tolerant, maxProbeTries):
 def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 	now = datetime.time(datetime.now())
 	fltAvgModr = 37
+	fltAvgModrGrand = 199
 	htmlFileName = 'diagram.html'
 	humanReadableDateTime = []
 	temperature = [] #Arrays
@@ -67,13 +67,15 @@ def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 		dewpt.append(row[3])
 
 	# Berechnung der gleitenden Mittelwerte der drei Messgrößen
-	moderatedTemperature = convolve(temperature, ones((fltAvgModr,))/fltAvgModr, mode='valid')
-	moderatedHumidity = convolve(humidity, ones((fltAvgModr,))/fltAvgModr, mode='valid')
-	moderatedDewpt = convolve(dewpt, ones((fltAvgModr,))/fltAvgModr, mode='valid')
+	moderatedTemperature = convolve(temperature, ones((fltAvgModrGrand,))/fltAvgModrGrand, mode='valid')
+	moderatedHumidity = convolve(humidity, ones((fltAvgModrGrand,))/fltAvgModrGrand, mode='valid')
+	moderatedDewpt = convolve(dewpt, ones((fltAvgModrGrand,))/fltAvgModrGrand, mode='valid')
 
 	# Diagrammerstellung
 	trace0 = Scatter(
-		x = humanReadableDateTime[int(fltAvgModr/2):-int(fltAvgModr/2)],
+		#x = humanReadableDateTime[int(fltAvgModrGrand/2):-int(fltAvgModrGrand/2):100] + [humanReadableDateTime[-1]],
+		#y = moderatedTemperature[0::100] + [temperature[-1]],
+		x = humanReadableDateTime[int(fltAvgModrGrand/2):-int(fltAvgModrGrand/2)],
 		y = moderatedTemperature,
 		name = 'Lufttemperatur',
 		line = dict(
@@ -82,16 +84,17 @@ def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 			shape = 'spline')
 	)
 	trace1 = Scatter(
-		x = humanReadableDateTime[int(fltAvgModr/2):-int(fltAvgModr/2)],
+		x = humanReadableDateTime[int(fltAvgModrGrand/2):-int(fltAvgModrGrand/2)],
 		y = moderatedHumidity,
-		name = 'Luftfeuchte',
+		name = 'Luftfeuchtigkeit',
 		line = dict(
 			color = ('rgb(22, 96, 167)'),
 			width = 4,
-			shape = 'spline')
+			shape = 'spline'),
+			yaxis = 'y2'
 	)
 	trace2 = Scatter(
-		x = humanReadableDateTime[int(fltAvgModr/2):-int(fltAvgModr/2)],
+		x = humanReadableDateTime[int(fltAvgModrGrand/2):-int(fltAvgModrGrand/2)],
 		y = moderatedDewpt,
 		name = 'Taupunkt',
 		line = dict(
@@ -100,40 +103,54 @@ def plot(dbConnection, diagramPeriod, remotepath, scp, tolerant):
 			shape = 'spline')
 	)
 
-	trace3 = Scatter(
+	"""trace3 = Scatter(
 		x = humanReadableDateTime,
 		y = temperature,
+		name = 'Lufttemperatur',
 		showlegend = False,
 		line = dict(
-			color = ('rgba(205, 12, 24, 0.5)'),
+			color = ('rgba(205, 12, 24, 0.25)'),
 			width = 1,
 			shape = 'spline')
 	)
 	trace4 = Scatter(
 		x = humanReadableDateTime,
 		y = humidity,
+		name = 'Luftfeuchtigkeit',
 		showlegend = False,
 		line = dict(
-			color = ('rgba(22, 96, 167, 0.5)'),
+			color = ('rgba(22, 96, 167, 0.25)'),
 			width = 1,
-			shape = 'spline')
+			shape = 'spline'),
+			yaxis = 'y2'
 	)
 	trace5 = Scatter(
 		x = humanReadableDateTime,
 		y = dewpt,
+		name = 'Taupunkt',
 		showlegend = False,
 		line = dict(
-			color = ('rgba(0, 192, 94, 0.5)'),
+			color = ('rgba(0, 192, 94, 0.25)'),
 			width = 1,
 			shape = 'spline')
-	)
+	)"""
 
-	data = [trace0, trace1, trace2, trace3, trace4, trace5]
+	data = [trace0, trace1, trace2] #, trace3, trace4, trace5]
 
 	# Edit the layout
-	layout = dict(title = 'Diagramm Temperatur/Feuchte/Taupunkt',
+	layout = dict(title = 'Diagramm Temperatur – Feuchtigkeit –Taupunkt',
 			xaxis = dict(title = 'Zeit'),
-			yaxis = dict(title = 'Temperatur(°C) / Feuchte(%) / Taupunkt(°C)'),
+			yaxis = dict(
+				title = 'Temperatur – Taupunkt °C',
+				
+			),
+			yaxis2 = dict(
+				title = 'Feuchtigkeit %',
+				titlefont = dict(color='rgb(128, 123, 199)'),
+				tickfont = dict(color='rgb(28, 23, 220)'),
+				overlaying='y',
+				side='right'
+			)
 		)
 	fig = dict(data = data, layout = layout)
 	plotlyPlot(fig, filename='diagram.html')
